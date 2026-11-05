@@ -99,19 +99,25 @@
       </div>
 
       <!-- Saved / Manual Receiver Selector -->
-      <div class="flex gap-2">
-        <input 
-          type="text" 
-          id="receiver-ip" 
-          placeholder="Receiver IP (e.g., 192.168.1.50)" 
-          class="flex-1 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
-        />
-        <button 
-          onclick="connectToReceiver()" 
-          class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-        >
-          Connect
-        </button>
+      <div class="flex flex-col gap-2">
+        <div class="flex gap-2">
+          <select id="protocol-select" class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-sky-500">
+            <option value="ws://">ws://</option>
+            <option value="wss://">wss://</option>
+          </select>
+          <input 
+            type="text" 
+            id="receiver-ip" 
+            placeholder="192.168.1.50 or hostname:46899" 
+            class="flex-1 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+          />
+          <button 
+            onclick="connectToReceiver()" 
+            class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            Connect
+          </button>
+        </div>
       </div>
 
       <!-- Saved Receivers List -->
@@ -144,6 +150,45 @@
 
     <!-- Notification / Log Box -->
     <div id="notification-box" class="hidden p-3 rounded-lg text-xs font-mono border"></div>
+
+    <!-- Mixed Content Help Diagnostic Box -->
+    <section id="mixed-content-guide" class="hidden bg-amber-950/30 border border-amber-800/60 rounded-xl p-4 flex flex-col gap-3 text-xs text-amber-200">
+      <div class="flex justify-between items-center border-b border-amber-800/40 pb-2">
+        <h3 class="font-bold text-amber-300 flex items-center gap-1.5">
+          ⚠️ HTTPS Mixed Content Restriction
+        </h3>
+        <button onclick="document.getElementById('mixed-content-guide').classList.add('hidden')" class="text-amber-400 hover:text-amber-200">✕</button>
+      </div>
+      <p class="text-amber-200/90 leading-relaxed">
+        Browsers block secure HTTPS websites (like GitHub Pages) from opening unencrypted <code class="bg-amber-950 px-1 py-0.5 rounded border border-amber-700 text-amber-300">ws://</code> connections to local IP addresses. Choose one of the solutions below:
+      </p>
+
+      <div class="flex flex-col gap-2.5">
+        <div class="bg-slate-950/60 border border-amber-900/50 p-2.5 rounded-lg">
+          <div class="font-semibold text-amber-300 mb-1">Option 1: Allow Insecure Content in Chrome / Android (Quickest)</div>
+          <ol class="list-decimal list-inside space-y-1 text-slate-300">
+            <li>Tap the <strong>Site Settings / Lock / Tune icon</strong> in your browser address bar.</li>
+            <li>Tap <strong>Site Settings</strong>.</li>
+            <li>Find <strong>Insecure Content</strong> and set it to <strong>Allow</strong>.</li>
+            <li>Reload this page and connect again.</li>
+          </ol>
+        </div>
+
+        <div class="bg-slate-950/60 border border-amber-900/50 p-2.5 rounded-lg">
+          <div class="font-semibold text-amber-300 mb-1">Option 2: Access App Over HTTP</div>
+          <p class="text-slate-300 leading-relaxed">
+            Host or serve this single <code class="text-sky-300">index.html</code> file over plain <code class="text-sky-300">http://</code> (e.g. using <code class="text-sky-300">npx serve</code>, Python <code class="text-sky-300">python -m http.server</code>, or local network IP). Browsers allow unencrypted <code class="text-sky-300">ws://</code> when the app itself is served via HTTP.
+          </p>
+        </div>
+
+        <div class="bg-slate-950/60 border border-amber-900/50 p-2.5 rounded-lg">
+          <div class="font-semibold text-amber-300 mb-1">Option 3: Use Secure WebSockets (wss://)</div>
+          <p class="text-slate-300 leading-relaxed">
+            If your FCast receiver or a local reverse proxy (Caddy/Nginx) is configured with SSL/TLS certificates, switch the protocol dropdown to <code class="text-sky-300">wss://</code> above.
+          </p>
+        </div>
+      </div>
+    </section>
   </main>
 
   <!-- Footer -->
@@ -161,7 +206,14 @@
     // --- DOM Elements ---
     const mediaUrlInput = document.getElementById('media-url-input');
     const receiverIpInput = document.getElementById('receiver-ip');
+    const protocolSelect = document.getElementById('protocol-select');
     const statusBadge = document.getElementById('status-badge');
+    const notificationBox = document.getElementById('notification-box');
+    const scannerContainer = document.getElementById('scanner-container');
+    const videoElement = document.getElementById('qr-video');
+    const savedReceiversContainer = document.getElementById('saved-receivers');
+    const mixedContentGuide = document.getElementById('mixed-content-guide');
+
     const notificationBox = document.getElementById('notification-box');
     const scannerContainer = document.getElementById('scanner-container');
     const videoElement = document.getElementById('qr-video');
@@ -202,31 +254,49 @@
     }
 
     // --- FCast Protocol & WebSocket Logic ---
-    function connectToReceiver(ipOverride = null, portOverride = 46899) {
-      const ip = ipOverride || receiverIpInput.value.trim();
-      const port = portOverride || 46899;
+    function connectToReceiver(ipOverride = null, portOverride = 46899, schemeOverride = null) {
+      let rawIp = ipOverride || receiverIpInput.value.trim();
+      let scheme = schemeOverride || protocolSelect.value;
+      let port = portOverride || 46899;
 
-      if (!ip) {
+      if (!rawIp) {
         showNotification('Please enter a valid Receiver IP', 'error');
         return;
       }
+
+      // Handle cases where scheme or port is passed inside the input string
+      if (rawIp.startsWith('ws://')) {
+        scheme = 'ws://';
+        rawIp = rawIp.replace('ws://', '');
+      } else if (rawIp.startsWith('wss://')) {
+        scheme = 'wss://';
+        rawIp = rawIp.replace('wss://', '');
+      }
+
+      if (rawIp.includes(':')) {
+        const parts = rawIp.split(':');
+        rawIp = parts[0];
+        port = parseInt(parts[1], 10) || port;
+      }
+
+      const wsUrl = `${scheme}${rawIp}:${port}`;
 
       if (activeWebSocket) {
         activeWebSocket.close();
       }
 
       updateStatus('Connecting...', 'bg-amber-900/40 text-amber-300 border-amber-700/50');
-      showNotification(`Opening WebSocket to ${ip}:${port}...`, 'info');
+      showNotification(`Opening WebSocket to ${wsUrl}...`, 'info');
 
       try {
-        // Standard FCast receiver WS port: 46899
-        activeWebSocket = new WebSocket(`ws://${ip}:${port}`);
+        activeWebSocket = new WebSocket(wsUrl);
 
         activeWebSocket.onopen = () => {
-          currentReceiver = { ip, port };
-          saveReceiver(ip, port);
-          updateStatus(`Connected: ${ip}`, 'bg-emerald-900/40 text-emerald-300 border-emerald-700/50');
-          showNotification(`Successfully connected to FCast Receiver!`, 'success');
+          currentReceiver = { ip: rawIp, port, scheme };
+          saveReceiver(rawIp, port, scheme);
+          updateStatus(`Connected: ${rawIp}`, 'bg-emerald-900/40 text-emerald-300 border-emerald-700/50');
+          showNotification(`Successfully connected to FCast Receiver (${wsUrl})!`, 'success');
+          mixedContentGuide.classList.add('hidden');
         };
 
         activeWebSocket.onclose = () => {
@@ -237,10 +307,18 @@
         activeWebSocket.onerror = (err) => {
           console.error("WebSocket Error:", err);
           updateStatus('Connection Error', 'bg-rose-900/40 text-rose-300 border-rose-700/50');
-          showNotification(`Failed to connect to ${ip}:${port}. Check IP or mixed content restrictions.`, 'error');
+          showNotification(`Failed to connect to ${wsUrl}.`, 'error');
+
+          // Check if on HTTPS and attempting unencrypted ws://
+          if (window.location.protocol === 'https:' && scheme === 'ws://') {
+            mixedContentGuide.classList.remove('hidden');
+          }
         };
       } catch (err) {
         showNotification(`WS Initialization Error: ${err.message}`, 'error');
+        if (window.location.protocol === 'https:' && scheme === 'ws://') {
+          mixedContentGuide.classList.remove('hidden');
+        }
       }
     }
 
@@ -377,24 +455,28 @@
 
     function processScannedQR(qrString) {
       showNotification(`Scanned QR: ${qrString}`, 'info');
-      let ip = '', port = 46899;
+      let ip = '', port = 46899, scheme = 'ws://';
 
       try {
         if (qrString.startsWith('{')) {
           const parsed = JSON.parse(qrString);
           ip = parsed.address || parsed.ip || '';
           port = parsed.port || 46899;
-        } else if (qrString.startsWith('fcast://') || qrString.startsWith('http')) {
-          const url = new URL(qrString.replace('fcast://', 'http://'));
+          if (parsed.scheme) scheme = parsed.scheme;
+        } else if (qrString.startsWith('fcast://') || qrString.startsWith('http') || qrString.startsWith('ws')) {
+          const formatted = qrString.replace('fcast://', 'http://');
+          const url = new URL(formatted);
           ip = url.hostname;
           port = url.port || 46899;
+          if (qrString.startsWith('wss://')) scheme = 'wss://';
         } else {
           ip = qrString.trim();
         }
 
         if (ip) {
           receiverIpInput.value = ip;
-          connectToReceiver(ip, port);
+          protocolSelect.value = scheme;
+          connectToReceiver(ip, port, scheme);
         } else {
           showNotification('Could not parse valid Receiver IP from QR code.', 'error');
         }
@@ -412,10 +494,10 @@
       }
     }
 
-    function saveReceiver(ip, port) {
+    function saveReceiver(ip, port, scheme = 'ws://') {
       let saved = getStoredReceivers();
       saved = saved.filter(r => r.ip !== ip);
-      saved.unshift({ ip, port, lastConnected: Date.now() });
+      saved.unshift({ ip, port, scheme, lastConnected: Date.now() });
       localStorage.setItem('fcast_receivers', JSON.stringify(saved.slice(0, 5)));
       loadSavedReceivers();
     }
@@ -429,10 +511,11 @@
       saved.forEach(rcv => {
         const btn = document.createElement('button');
         btn.className = 'text-xs bg-slate-950 border border-slate-700 hover:border-sky-500 text-slate-300 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1';
-        btn.innerHTML = `📺 ${rcv.ip}`;
+        btn.innerHTML = `📺 ${rcv.scheme || 'ws://'}${rcv.ip}`;
         btn.onclick = () => {
           receiverIpInput.value = rcv.ip;
-          connectToReceiver(rcv.ip, rcv.port);
+          protocolSelect.value = rcv.scheme || 'ws://';
+          connectToReceiver(rcv.ip, rcv.port, rcv.scheme || 'ws://');
         };
         savedReceiversContainer.appendChild(btn);
       });
