@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FCast Web Sender</title>
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="description" content="FCast sender application for sharing media to FCast receivers" />
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Dynamic Web App Manifest via Data URI -->
+  <script>
+    const manifestJson = {
+      "name": "FCast Web Sender",
+      "short_name": "FCast",
+      "description": "Send and cast media to FCast Receivers",
+      "start_url": "./",
+      "display": "standalone",
+      "background_color": "#0f172a",
+      "theme_color": "#0f172a",
+      "icons": [
+        {
+          "src": "https://placehold.co/512x512/0284c7/ffffff?text=FCast",
+          "sizes": "512x512",
+          "type": "image/png"
+        }
+      ],
+      "share_target": {
+        "action": "./",
+        "method": "GET",
+        "params": {
+          "title": "title",
+          "text": "text",
+          "url": "url"
+        }
+      }
+    };
+    
+    const manifestBlob = new Blob([JSON.stringify(manifestJson)], { type: 'application/json' });
+    const manifestUrl = URL.createObjectURL(manifestBlob);
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = manifestUrl;
+    document.head.appendChild(link);
+  </script>
+</head>
+<body class="h-full flex flex-col font-sans antialiased select-none">
+
+  <!-- Header -->
+  <header class="bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-20 shadow-md">
+    <div class="max-w-md mx-auto flex justify-between items-center">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-sky-600 flex items-center justify-center font-bold text-white shadow-sm">
+          ⚡
+        </div>
+        <h1 class="font-bold text-lg text-slate-100">FCast Sender</h1>
+      </div>
+      <span id="status-badge" class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-medium">
+        Disconnected
+      </span>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="flex-1 max-w-md w-full mx-auto p-4 flex flex-col gap-5 overflow-y-auto">
+
+    <!-- Active Media Card (Receiving from Shared Intent) -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Payload to Cast</h2>
+      <div class="flex flex-col gap-3">
+        <input 
+          type="url" 
+          id="media-url-input" 
+          placeholder="https://example.com/video.mp4" 
+          class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-sky-500 transition-colors"
+        />
+        <div class="flex gap-2">
+          <button 
+            id="btn-cast" 
+            onclick="castCurrentMedia()" 
+            class="flex-1 bg-sky-600 hover:bg-sky-500 text-white font-medium py-2.5 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            Cast Now
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Receiver Connection Section -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm flex flex-col gap-3">
+      <div class="flex justify-between items-center">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Target Receiver</h2>
+        <button onclick="toggleScanner()" class="text-xs text-sky-400 hover:text-sky-300 font-medium flex items-center gap-1">
+          📷 Scan QR
+        </button>
+      </div>
+
+      <!-- Saved / Manual Receiver Selector -->
+      <div class="flex gap-2">
+        <input 
+          type="text" 
+          id="receiver-ip" 
+          placeholder="Receiver IP (e.g., 192.168.1.50)" 
+          class="flex-1 bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-100 focus:outline-none focus:border-sky-500"
+        />
+        <button 
+          onclick="connectToReceiver()" 
+          class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+        >
+          Connect
+        </button>
+      </div>
+
+      <!-- Saved Receivers List -->
+      <div id="saved-receivers" class="flex flex-wrap gap-2 pt-1">
+        <!-- Dynamically injected -->
+      </div>
+    </section>
+
+    <!-- Camera QR Scanner Overlay / Container -->
+    <section id="scanner-container" class="hidden bg-slate-900 border border-slate-800 rounded-xl p-4 relative overflow-hidden flex flex-col items-center">
+      <div class="w-full flex justify-between items-center mb-3">
+        <span class="text-sm font-medium text-slate-200">Point Camera at FCast QR</span>
+        <button onclick="stopScanner()" class="text-xs text-slate-400 hover:text-slate-200">Close</button>
+      </div>
+      
+      <div class="relative w-full aspect-square max-w-[260px] bg-black rounded-lg overflow-hidden border border-slate-700">
+        <video id="qr-video" class="w-full h-full object-cover" playsinline></video>
+        <div class="absolute inset-0 border-2 border-sky-500 border-dashed rounded-lg opacity-60 pointer-events-none"></div>
+      </div>
+
+      <!-- Native Scanner Unsupported Fallback -->
+      <div id="scanner-fallback" class="hidden mt-3 w-full text-center">
+        <p class="text-xs text-slate-400 mb-2">Native camera scanner not supported on this browser.</p>
+        <label class="cursor-pointer bg-slate-800 hover:bg-slate-700 text-xs px-3 py-2 rounded-lg border border-slate-700 inline-block text-slate-200">
+          Upload QR Image
+          <input type="file" accept="image/*" class="hidden" onchange="handleQRImageUpload(event)">
+        </label>
+      </div>
+    </section>
+
+    <!-- Notification / Log Box -->
+    <div id="notification-box" class="hidden p-3 rounded-lg text-xs font-mono border"></div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="p-4 text-center text-xs text-slate-600 border-t border-slate-900">
+    FCast Web Sender Protocol v1 &bull; PWA Ready
+  </footer>
+
+  <script>
+    // --- State Variables ---
+    let activeWebSocket = null;
+    let cameraStream = null;
+    let scanAnimationId = null;
+    let currentReceiver = null;
+
+    // --- DOM Elements ---
+    const mediaUrlInput = document.getElementById('media-url-input');
+    const receiverIpInput = document.getElementById('receiver-ip');
+    const statusBadge = document.getElementById('status-badge');
+    const notificationBox = document.getElementById('notification-box');
+    const scannerContainer = document.getElementById('scanner-container');
+    const videoElement = document.getElementById('qr-video');
+    const savedReceiversContainer = document.getElementById('saved-receivers');
+
+    // --- App Lifecycle & Initialization ---
+    window.addEventListener('DOMContentLoaded', () => {
+      registerServiceWorker();
+      handleShareTargetIntent();
+      loadSavedReceivers();
+    });
+
+    // --- Web Share Target Handling ---
+    function handleShareTargetIntent() {
+      const params = new URLSearchParams(window.location.search);
+      const sharedUrl = params.get('url');
+      const sharedText = params.get('text');
+      const sharedTitle = params.get('title');
+
+      let targetMedia = sharedUrl || extractUrlFromString(sharedText) || extractUrlFromString(sharedTitle);
+
+      if (targetMedia) {
+        mediaUrlInput.value = targetMedia;
+        showNotification(`Received payload from Share menu`, 'success');
+        
+        // Auto-connect to last saved receiver if available
+        const saved = getStoredReceivers();
+        if (saved.length > 0) {
+          connectToReceiver(saved[0].ip, saved[0].port);
+        }
+      }
+    }
+
+    function extractUrlFromString(str) {
+      if (!str) return null;
+      const match = str.match(/https?:\/\/[^\s]+/);
+      return match ? match[0] : null;
+    }
+
+    // --- FCast Protocol & WebSocket Logic ---
+    function connectToReceiver(ipOverride = null, portOverride = 46899) {
+      const ip = ipOverride || receiverIpInput.value.trim();
+      const port = portOverride || 46899;
+
+      if (!ip) {
+        showNotification('Please enter a valid Receiver IP', 'error');
+        return;
+      }
+
+      if (activeWebSocket) {
+        activeWebSocket.close();
+      }
+
+      updateStatus('Connecting...', 'bg-amber-900/40 text-amber-300 border-amber-700/50');
+      showNotification(`Opening WebSocket to ${ip}:${port}...`, 'info');
+
+      try {
+        // Standard FCast receiver WS port: 46899
+        activeWebSocket = new WebSocket(`ws://${ip}:${port}`);
+
+        activeWebSocket.onopen = () => {
+          currentReceiver = { ip, port };
+          saveReceiver(ip, port);
+          updateStatus(`Connected: ${ip}`, 'bg-emerald-900/40 text-emerald-300 border-emerald-700/50');
+          showNotification(`Successfully connected to FCast Receiver!`, 'success');
+        };
+
+        activeWebSocket.onclose = () => {
+          updateStatus('Disconnected', 'bg-slate-800 text-slate-400 border-slate-700');
+          activeWebSocket = null;
+        };
+
+        activeWebSocket.onerror = (err) => {
+          console.error("WebSocket Error:", err);
+          updateStatus('Connection Error', 'bg-rose-900/40 text-rose-300 border-rose-700/50');
+          showNotification(`Failed to connect to ${ip}:${port}. Check IP or mixed content restrictions.`, 'error');
+        };
+      } catch (err) {
+        showNotification(`WS Initialization Error: ${err.message}`, 'error');
+      }
+    }
+
+    function castCurrentMedia() {
+      const mediaUrl = mediaUrlInput.value.trim();
+      if (!mediaUrl) {
+        showNotification('Please provide a Media URL to cast', 'error');
+        return;
+      }
+
+      if (!activeWebSocket || activeWebSocket.readyState !== WebSocket.OPEN) {
+        showNotification('Not connected to any FCast receiver. Connecting first...', 'info');
+        connectToReceiver();
+        // Retry cast once connected
+        setTimeout(() => {
+          if (activeWebSocket && activeWebSocket.readyState === WebSocket.OPEN) {
+            sendFCastPlayPacket(mediaUrl);
+          }
+        }, 1200);
+        return;
+      }
+
+      sendFCastPlayPacket(mediaUrl);
+    }
+
+    function sendFCastPlayPacket(mediaUrl) {
+      try {
+        // FCast Opcode 1 = Play
+        const playPayload = {
+          container: mediaUrl.endsWith('.m3u8') ? 'hls' : 'mp4',
+          url: mediaUrl
+        };
+
+        const jsonString = JSON.stringify(playPayload);
+        const jsonBytes = new TextEncoder().encode(jsonString);
+
+        // FCast Binary Structure: [Opcode (1 byte), JSON Bytes...]
+        const packet = new Uint8Array(1 + jsonBytes.length);
+        packet[0] = 0x01; // Play Opcode
+        packet.set(jsonBytes, 1);
+
+        activeWebSocket.send(packet.buffer);
+        showNotification(`Cast command sent to receiver!`, 'success');
+      } catch (err) {
+        showNotification(`Failed to send packet: ${err.message}`, 'error');
+      }
+    }
+
+    // --- QR Scanner (Native BarcodeDetector API) ---
+    async function toggleScanner() {
+      if (scannerContainer.classList.contains('hidden')) {
+        scannerContainer.classList.remove('hidden');
+        await startScanner();
+      } else {
+        stopScanner();
+      }
+    }
+
+    async function startScanner() {
+      const fallbackElem = document.getElementById('scanner-fallback');
+
+      if (!('BarcodeDetector' in window)) {
+        fallbackElem.classList.remove('hidden');
+        showNotification('Native BarcodeDetector unavailable. Use image upload fallback.', 'info');
+        return;
+      }
+
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        videoElement.srcObject = cameraStream;
+        await videoElement.play();
+
+        const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+
+        const detectLoop = async () => {
+          if (!cameraStream) return;
+          try {
+            const barcodes = await barcodeDetector.detect(videoElement);
+            if (barcodes.length > 0) {
+              const qrData = barcodes[0].rawValue;
+              stopScanner();
+              processScannedQR(qrData);
+              return;
+            }
+          } catch (e) {
+            console.error("Frame detection error", e);
+          }
+          scanAnimationId = requestAnimationFrame(detectLoop);
+        };
+
+        detectLoop();
+      } catch (err) {
+        console.error("Camera access error:", err);
+        fallbackElem.classList.remove('hidden');
+        showNotification('Unable to access camera. Use image fallback.', 'error');
+      }
+    }
+
+    function stopScanner() {
+      if (scanAnimationId) cancelAnimationFrame(scanAnimationId);
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        cameraStream = null;
+      }
+      scannerContainer.classList.add('hidden');
+    }
+
+    async function handleQRImageUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      if (!('BarcodeDetector' in window)) {
+        showNotification('BarcodeDetector not supported even for static images.', 'error');
+        return;
+      }
+
+      try {
+        const imageBitmap = await createImageBitmap(file);
+        const barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+        const barcodes = await barcodeDetector.detect(imageBitmap);
+
+        if (barcodes.length > 0) {
+          stopScanner();
+          processScannedQR(barcodes[0].rawValue);
+        } else {
+          showNotification('No QR code detected in the uploaded image.', 'error');
+        }
+      } catch (err) {
+        showNotification(`Image scan error: ${err.message}`, 'error');
+      }
+    }
+
+    function processScannedQR(qrString) {
+      showNotification(`Scanned QR: ${qrString}`, 'info');
+      let ip = '', port = 46899;
+
+      try {
+        if (qrString.startsWith('{')) {
+          const parsed = JSON.parse(qrString);
+          ip = parsed.address || parsed.ip || '';
+          port = parsed.port || 46899;
+        } else if (qrString.startsWith('fcast://') || qrString.startsWith('http')) {
+          const url = new URL(qrString.replace('fcast://', 'http://'));
+          ip = url.hostname;
+          port = url.port || 46899;
+        } else {
+          ip = qrString.trim();
+        }
+
+        if (ip) {
+          receiverIpInput.value = ip;
+          connectToReceiver(ip, port);
+        } else {
+          showNotification('Could not parse valid Receiver IP from QR code.', 'error');
+        }
+      } catch (err) {
+        showNotification('Invalid QR payload format.', 'error');
+      }
+    }
+
+    // --- Storage & Receiver Management ---
+    function getStoredReceivers() {
+      try {
+        return JSON.parse(localStorage.getItem('fcast_receivers') || '[]');
+      } catch {
+        return [];
+      }
+    }
+
+    function saveReceiver(ip, port) {
+      let saved = getStoredReceivers();
+      saved = saved.filter(r => r.ip !== ip);
+      saved.unshift({ ip, port, lastConnected: Date.now() });
+      localStorage.setItem('fcast_receivers', JSON.stringify(saved.slice(0, 5)));
+      loadSavedReceivers();
+    }
+
+    function loadSavedReceivers() {
+      const saved = getStoredReceivers();
+      savedReceiversContainer.innerHTML = '';
+
+      if (saved.length === 0) return;
+
+      saved.forEach(rcv => {
+        const btn = document.createElement('button');
+        btn.className = 'text-xs bg-slate-950 border border-slate-700 hover:border-sky-500 text-slate-300 px-2.5 py-1 rounded-md transition-colors flex items-center gap-1';
+        btn.innerHTML = `📺 ${rcv.ip}`;
+        btn.onclick = () => {
+          receiverIpInput.value = rcv.ip;
+          connectToReceiver(rcv.ip, rcv.port);
+        };
+        savedReceiversContainer.appendChild(btn);
+      });
+    }
+
+    // --- UI Helpers ---
+    function updateStatus(text, classes) {
+      statusBadge.innerText = text;
+      statusBadge.className = `text-xs px-2.5 py-1 rounded-full font-medium border ${classes}`;
+    }
+
+    function showNotification(msg, type = 'info') {
+      notificationBox.classList.remove('hidden', 'bg-emerald-950/60', 'border-emerald-800', 'text-emerald-300', 'bg-rose-950/60', 'border-rose-800', 'text-rose-300', 'bg-slate-900', 'border-slate-800', 'text-slate-300');
+      
+      if (type === 'success') {
+        notificationBox.classList.add('bg-emerald-950/60', 'border-emerald-800', 'text-emerald-300');
+      } else if (type === 'error') {
+        notificationBox.classList.add('bg-rose-950/60', 'border-rose-800', 'text-rose-300');
+      } else {
+        notificationBox.classList.add('bg-slate-900', 'border-slate-800', 'text-slate-300');
+      }
+
+      notificationBox.innerText = `> ${msg}`;
+    }
+
+    // --- Inline Service Worker Registration ---
+    function registerServiceWorker() {
+      if ('serviceWorker' in navigator) {
+        const swCode = `
+          self.addEventListener('install', (e) => self.skipWaiting());
+          self.addEventListener('activate', (e) => self.clients.claim());
+          self.addEventListener('fetch', (e) => {
+            // Basic pass-through fetch handler for PWA compatibility
+            e.respondWith(fetch(e.request).catch(() => new Response('Offline')));
+          });
+        `;
+        const blob = new Blob([swCode], { type: 'application/javascript' });
+        const swUrl = URL.createObjectURL(blob);
+        
+        navigator.serviceWorker.register(swUrl)
+          .then(() => console.log('Inline Service Worker Registered'))
+          .catch(err => console.error('SW Registration Failed:', err));
+      }
+    }
+  </script>
+</body>
+</html>
